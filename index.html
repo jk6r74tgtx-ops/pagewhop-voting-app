@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Top/Flop Abstimmungs-Galerie</title>
+    <!-- Tailwind CSS (für einfache und responsive Gestaltung) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f7f9fb; }
+        .card { transition: transform 0.2s, box-shadow 0.2s; }
+        .card:hover { transform: translateY(-3px); box-shadow: 0 10px 15px rgba(0, 0, 0, 0.1); }
+        .loading-spinner { border-top-color: #3b82f6; -webkit-animation: spinner 1.5s linear infinite; animation: spinner 1.5s linear infinite; }
+        @keyframes spinner { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="p-4 sm:p-8">
+
+    <!-- 
+        AUTHENTIFIZIERUNGS-GATE: 
+        Dieser Container ist standardmäßig sichtbar und verbirgt den Hauptinhalt, 
+        bis die Firebase-Authentifizierung abgeschlossen ist.
+    -->
+    <div id="auth-gate" class="fixed inset-0 bg-gray-100 flex flex-col items-center justify-center p-8 z-50">
+        <div class="loading-spinner w-16 h-16 border-8 border-gray-300 border-solid rounded-full mb-6"></div>
+        <h2 class="text-2xl font-bold text-gray-800">Prüfe Mitgliederzugang...</h2>
+        <p class="mt-2 text-gray-600 text-center">Bitte warten Sie, während Ihre Berechtigung geprüft wird.</p>
+        <p id="auth-status" class="mt-4 text-sm text-red-500 hidden">Zugriff verweigert. Nur für Mitglieder.</p>
+    </div>
+
+    <!-- HAUPTINHALT (wird nach erfolgreicher Authentifizierung sichtbar) -->
+    <div id="main-content" class="max-w-7xl mx-auto hidden">
+        <header class="text-center py-8 mb-6 bg-white rounded-xl shadow-lg">
+            <h1 class="text-4xl font-extrabold text-gray-900">Die Große Abstimmungs-Galerie</h1>
+            <p class="mt-2 text-lg text-gray-600">Entscheide: Top oder Flop! Die Besten schaffen es in den Monats-Highlight-Kanal.</p>
+            <div id="test-mode-warning" class="mt-4 p-2 bg-red-100 text-red-700 font-semibold rounded-lg mx-auto max-w-lg">
+                ⚠️ TESTMODUS AKTIV: Echte Abstimmungen werden NICHT gespeichert.
+            </div>
+        </header>
+
+        <!-- Sektion für die Monatsbesten (Prominente Anzeige) -->
+        <section id="monthly-best-container" class="mb-10 p-6 bg-yellow-50 border-4 border-yellow-300 rounded-xl shadow-inner hidden">
+            <h2 class="text-2xl font-bold text-gray-800 flex items-center mb-4">
+                <span class="mr-3 text-3xl">🏆</span> Monats-Highlight
+            </h2>
+            <div id="monthly-best-item" class="flex flex-col md:flex-row gap-6">
+                <!-- Highlight Card -->
+            </div>
+        </section>
+
+        <!-- Filter und Sortierung -->
+        <div class="bg-white p-6 rounded-xl shadow-lg mb-8 flex flex-col md:flex-row gap-4">
+            <input type="text" id="filter-search" placeholder="Suche nach Titel oder Beschreibung..."
+                   class="w-full md:w-1/3 p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
+                   onkeyup="applyFiltersAndSort()">
+
+            <select id="sort-by" onchange="applyFiltersAndSort()"
+                    class="w-full md:w-1/4 p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500">
+                <option value="newest">Neueste zuerst</option>
+                <option value="top_votes">Meiste Top-Votes</option>
+                <option value="best_ratio">Bestes Top/Flop-Verhältnis</option>
+            </select>
+            
+            <button id="show-all-btn" onclick="toggleShowAll()" 
+                    class="w-full md:w-1/4 p-3 bg-blue-500 text-white font-semibold rounded-lg hover:bg-blue-600 transition duration-150">
+                Alle Beiträge anzeigen
+            </button>
+        </div>
+        
+        <!-- Lade-Indikator und Fehlerbereich -->
+        <div id="loading" class="text-center py-12">
+            <div class="loading-spinner inline-block w-12 h-12 border-4 border-gray-200 border-solid rounded-full"></div>
+            <p class="mt-4 text-gray-600">Daten werden geladen...</p>
+        </div>
+        <div id="error-message" class="text-center py-12 text-red-600 hidden">
+            Fehler beim Laden der Daten. Bitte prüfen Sie die n8n-URL und ob der Workflow aktiv ist.
+        </div>
+
+        <!-- Galerie-Container -->
+        <div id="items-gallery" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
+            <!-- Items werden hier per JavaScript eingefügt -->
+        </div>
+    </div>
+
+    <!-- Abstimmungs-Bestätigungs-Modal (Anstelle von alert()) -->
+    <div id="modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 hidden items-center justify-center p-4" onclick="closeModal()">
+        <div class="bg-white p-6 rounded-xl shadow-2xl max-w-sm w-full transform transition-all scale-100" onclick="event.stopPropagation()">
+            <h3 class="text-xl font-bold mb-3 text-green-600">Stimme abgegeben!</h3>
+            <p id="modal-text" class="text-gray-700">Ihre Entscheidung wurde erfolgreich gezählt.</p>
+            <button onclick="closeModal()" class="mt-4 w-full bg-blue-500 text-white p-2 rounded-lg hover:bg-blue-600 transition">Schließen</button>
+        </div>
+    </div>
+
+    <script type="module">
+        // Firebase Imports
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        
+        // ######################################################################################
+        // # WICHTIG: ANPASSEN! ERSETZEN SIE DIESE PLATZHALTER MIT IHREN LIVE-WERTEN
+        // ######################################################################################
+        
+        // 1. URL zum Abrufen der Daten (n8n Workflow 1)
+        const FETCH_API_URL = "https://IHRE-N8N-URL/webhook/fetch-items"; 
+        
+        // 2. URL zum Verarbeiten der Abstimmung (n8n Workflow 2)
+        const VOTE_API_URL = "https://IHRE-N8N-URL/webhook/vote"; 
+        
+        // 3. Das Geheime Kennwort - MUSS identisch sein mit dem Wert im n8n If-Node
+        const WEBAPP_SECRET_KEY = "IhrSicheresGeheimnis123"; 
+        
+        // ######################################################################################
+        
+        // Firebase Setup (MANDATORY GLOBALS)
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        
+        let allItems = [];
+        let isShowingAll = false;
+        let authReady = false;
+
+        // Element-Referenzen
+        const galleryEl = document.getElementById('items-gallery');
+        const loadingEl = document.getElementById('loading');
+        const errorEl = document.getElementById('error-message');
+        const bestContainerEl = document.getElementById('monthly-best-container');
+        const bestItemEl = document.getElementById('monthly-best-item');
+        const showAllBtn = document.getElementById('show-all-btn');
+        const authGateEl = document.getElementById('auth-gate');
+        const mainContentEl = document.getElementById('main-content');
+        const authStatusEl = document.getElementById('auth-status');
+        const testModeWarningEl = document.getElementById('test-mode-warning');
+
+
+        // --- FIREBASE INITIALISIERUNG UND AUTHENTIFIZIERUNG ---
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        
+        async function initializeFirebase() {
+            try {
+                // Versuche, mit dem bereitgestellten Token anzumelden
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    // Fallback zur anonymen Anmeldung, falls kein Token verfügbar
+                    await signInAnonymously(auth);
+                }
+            } catch (error) {
+                console.error("Firebase Anmeldefehler:", error);
+            }
+
+            // Setze den Auth State Listener (dieser wird immer ausgeführt)
+            onAuthStateChanged(auth, (user) => {
+                authReady = true;
+                if (user) {
+                    // console.log("Benutzer authentifiziert:", user.uid);
+                    // Verstecke das Gate und zeige den Hauptinhalt
+                    authGateEl.classList.add('hidden');
+                    mainContentEl.classList.remove('hidden');
+                    // Beginne mit dem Laden der Daten erst nach erfolgreicher Authentifizierung
+                    fetchData();
+                } else {
+                    console.log("Kein Benutzer angemeldet. Zugriff verweigert.");
+                    authGateEl.querySelector('.loading-spinner').classList.add('hidden');
+                    authStatusEl.textContent = 'Zugriff verweigert. Nur für Mitglieder zugänglich.';
+                    authStatusEl.classList.remove('hidden');
+                }
+            });
+        }
+        
+        // --- ANWENDUNGSFUNKTIONEN ---
+
+        function showModal(message, isSuccess = true) {
+            const modal = document.getElementById('modal');
+            const modalText = document.getElementById('modal-text');
+            const modalTitle = modal.querySelector('h3');
+            
+            modalText.textContent = message;
+            modalTitle.textContent = isSuccess ? 'Stimme abgegeben!' : 'Fehler';
+            modalTitle.classList.toggle('text-green-600', isSuccess);
+            modalTitle.classList.toggle('text-red-600', !isSuccess);
+            
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        function closeModal() {
+            const modal = document.getElementById('modal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        /**
+         * Ruft die Daten über den n8n Webhook ab.
+         * Inklusive Secret-Key für die Sicherheit.
+         * * WICHTIG: IM TESTMODUS WERDEN MOCK-DATEN VERWENDET!
+         */
+        async function fetchData() {
+            if (!authReady || !auth.currentUser) return;
+
+            loadingEl.classList.remove('hidden');
+            errorEl.classList.add('hidden');
+
+            // --- START MOCK-DATEN LOGIK ---
+            // Simuliert eine 1-sekündige Verzögerung für das Laden
+            await new Promise(resolve => setTimeout(resolve, 1000)); 
+
+            const mockData = [
+                { ID: '1', Titel: 'Die KI-Revolution', Beschreibung: 'Eine tiefgehende Analyse der neuesten GPT-Modelle und ihrer Auswirkungen auf den Markt.', Bild_URL: 'https://placehold.co/400x300/60a5fa/ffffff?text=KI-Analyse', Votes_Top: 45, Votes_Flop: 5, Post_Date: new Date(Date.now() - 86400000 * 5) },
+                { ID: '2', Titel: 'Automatisierung mit n8n', Beschreibung: 'Schritt-für-Schritt-Anleitung zur Erstellung komplexer Workflows ohne Code.', Bild_URL: 'https://placehold.co/400x300/34d399/ffffff?text=n8n-Workflow', Votes_Top: 12, Votes_Flop: 8, Post_Date: new Date(Date.now() - 86400000 * 15) },
+                { ID: '3', Titel: 'Telegram Channel Marketing', Beschreibung: 'Die 5 besten Strategien, um Ihre Reichweite in Telegram zu verdoppeln.', Bild_URL: 'https://placehold.co/400x300/8b5cf6/ffffff?text=Telegram-Tipps', Votes_Top: 90, Votes_Flop: 10, Post_Date: new Date(Date.now() - 86400000 * 25) },
+                { ID: '4', Titel: 'Whop Integration Basics', Beschreibung: 'Wie man Mitglieder-Token nutzt, um Premium-Zugang zu sichern.', Bild_URL: 'https://placehold.co/400x300/f87171/ffffff?text=Whop-Sicherheit', Votes_Top: 5, Votes_Flop: 40, Post_Date: new Date(Date.now() - 86400000 * 45) },
+                { ID: '5', Titel: 'Das Crypto-Update (Alt)', Beschreibung: 'Ein älterer Beitrag, der die Kursentwicklungen von vor zwei Monaten beleuchtet.', Bild_URL: 'https://placehold.co/400x300/fbbf24/ffffff?text=Archiv', Votes_Top: 30, Votes_Flop: 2, Post_Date: new Date(Date.now() - 86400000 * 70) },
+                { ID: '6', Titel: 'Der Wochenrückblick (Neu)', Beschreibung: 'Die wichtigsten Ereignisse der letzten 7 Tage.', Bild_URL: 'https://placehold.co/400x300/3b82f6/ffffff?text=Rueckblick', Votes_Top: 20, Votes_Flop: 1, Post_Date: new Date(Date.now() - 86400000 * 1) },
+            ];
+
+            // Daten für die App aufbereiten
+            allItems = mockData.map(item => ({
+                ...item,
+                Votes_Top: parseInt(item.Votes_Top || 0),
+                Votes_Flop: parseInt(item.Votes_Flop || 0),
+                Post_Date: item.Post_Date, 
+                ratio: (item.Votes_Top / (item.Votes_Top + item.Votes_Flop) || 1).toFixed(2)
+            }));
+            
+            applyFiltersAndSort();
+            loadingEl.classList.add('hidden');
+            // --- END MOCK-DATEN LOGIK ---
+
+            /* // Hier wäre der echte API-Code (auskommentiert):
+
+            try {
+                const fetchUrlWithSecret = `${FETCH_API_URL}?secret=${encodeURIComponent(WEBAPP_SECRET_KEY)}`;
+                
+                const response = await fetch(fetchUrlWithSecret, {
+                    method: 'GET',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`API Fehler: ${response.status}`);
+                }
+
+                const data = await response.json();
+                
+                allItems = data.map(item => ({
+                    ...item,
+                    Votes_Top: parseInt(item.Votes_Top || 0),
+                    Votes_Flop: parseInt(item.Votes_Flop || 0),
+                    Post_Date: new Date(item.Post_Date || 0), 
+                    ratio: (parseInt(item.Votes_Top) / (parseInt(item.Votes_Top) + parseInt(item.Votes_Flop) || 1)).toFixed(2)
+                }));
+                
+                applyFiltersAndSort();
+            } catch (error) {
+                console.error("Fehler beim Laden der Daten (Prüfe Secret im n8n):", error);
+                errorEl.classList.remove('hidden');
+                galleryEl.innerHTML = 'Daten konnten nicht sicher geladen werden.';
+            } finally {
+                loadingEl.classList.add('hidden');
+            }
+            */
+        }
+
+        // Restliche Funktionen beibehalten
+        
+        function applyFiltersAndSort() {
+            let filteredItems = [...allItems];
+            const searchTerm = document.getElementById('filter-search').value.toLowerCase();
+            const sortBy = document.getElementById('sort-by').value;
+            const today = new Date();
+            const lastMonth = new Date(today.getFullYear(), today.getMonth() - 1, today.getDate());
+
+            // 1. Filtern (Suche)
+            if (searchTerm) {
+                filteredItems = filteredItems.filter(item => 
+                    item.Titel.toLowerCase().includes(searchTerm) || 
+                    item.Beschreibung.toLowerCase().includes(searchTerm)
+                );
+            }
+
+            // 2. Filtern (Monats-Besten-Logik für die Galerie-Ansicht)
+            if (!isShowingAll) {
+                filteredItems = filteredItems.filter(item => item.Post_Date >= lastMonth);
+            }
+
+            // 3. Sortieren
+            filteredItems.sort((a, b) => {
+                if (sortBy === 'newest') {
+                    return b.Post_Date - a.Post_Date;
+                } else if (sortBy === 'top_votes') {
+                    return b.Votes_Top - a.Votes_Top;
+                } else if (sortBy === 'best_ratio') {
+                    return b.ratio - a.ratio;
+                }
+                return 0;
+            });
+            
+            renderMonthlyBest(allItems);
+            renderItems(filteredItems);
+        }
+        
+        function renderItems(items) {
+            galleryEl.innerHTML = '';
+            if (items.length === 0) {
+                galleryEl.innerHTML = `<div class="col-span-full text-center py-10 text-gray-500">
+                    Keine Beiträge gefunden, die den Kriterien entsprechen.
+                </div>`;
+                return;
+            }
+
+            items.forEach(item => {
+                const card = document.createElement('div');
+                card.className = 'card bg-white rounded-xl shadow-md overflow-hidden flex flex-col justify-between border border-gray-100';
+                
+                const totalVotes = item.Votes_Top + item.Votes_Flop;
+                const topPercentage = (item.Votes_Top / totalVotes * 100) || 0;
+                
+                // Prüfe, ob der Benutzer bereits abgestimmt hat (im Testmodus immer NEIN, da wir keine DB haben)
+                const voted = false; 
+
+                card.innerHTML = `
+                    <div class="h-48 overflow-hidden bg-gray-100">
+                        <img src="${item.Bild_URL}" alt="${item.Titel}" 
+                             onerror="this.onerror=null;this.src='https://placehold.co/400x300/e0e0e0/555?text=Bild+fehlt';"
+                             class="w-full h-full object-cover">
+                    </div>
+                    <div class="p-5 flex-grow">
+                        <h3 class="text-xl font-bold text-gray-800 mb-2">${item.Titel}</h3>
+                        <p class="text-gray-600 text-sm mb-4 line-clamp-3">${item.Beschreibung}</p>
+                    </div>
+                    <div class="p-5 pt-0">
+                        <div class="w-full h-3 bg-red-200 rounded-full mb-2 overflow-hidden" title="Top: ${item.Votes_Top}, Flop: ${item.Votes_Flop}">
+                            <div class="h-full bg-green-500 transition-all duration-500" style="width: ${topPercentage.toFixed(0)}%;"></div>
+                        </div>
+                        <p class="text-xs text-gray-500 mb-4">
+                            <span class="font-bold text-green-600">${item.Votes_Top} Top</span> / 
+                            <span class="font-bold text-red-600">${item.Votes_Flop} Flop</span> | 
+                            ${topPercentage.toFixed(0)}% Zustimmung
+                        </p>
+                        <div class="flex space-x-3">
+                            <button onclick="handleVote('${item.ID}', 'TOP', this)" 
+                                class="flex-1 p-3 bg-green-500 text-white text-sm font-semibold rounded-lg hover:bg-green-600 transition duration-150 shadow-md ${voted ? 'opacity-50 cursor-not-allowed' : ''}"
+                                ${voted ? 'disabled' : ''}>
+                                ${voted ? 'Bereits Top' : '👍 Top'}
+                            </button>
+                            <button onclick="handleVote('${item.ID}', 'FLOP', this)" 
+                                class="flex-1 p-3 bg-red-500 text-white text-sm font-semibold rounded-lg hover:bg-red-600 transition duration-150 shadow-md ${voted ? 'opacity-50 cursor-not-allowed' : ''}"
+                                ${voted ? 'disabled' : ''}>
+                                ${voted ? 'Bereits Flop' : '👎 Flop'}
+                            </button>
+                        </div>
+                    </div>
+                `;
+                galleryEl.appendChild(card);
+            });
+        }
+
+        function renderMonthlyBest(data) {
+            const bestItem = data
+                .filter(item => (item.Votes_Top + item.Votes_Flop) >= 10)
+                .sort((a, b) => b.ratio - a.ratio)[0];
+
+            if (bestItem) {
+                bestContainerEl.classList.remove('hidden');
+                bestItemEl.innerHTML = `
+                    <div class="w-full md:w-1/3 h-56 overflow-hidden rounded-lg">
+                        <img src="${bestItem.Bild_URL}" alt="${bestItem.Titel}" 
+                             onerror="this.onerror=null;this.src='https://placehold.co/400x300/fcd34d/78350f?text=TOP';"
+                             class="w-full h-full object-cover">
+                    </div>
+                    <div class="w-full md:w-2/3">
+                        <h3 class="text-3xl font-extrabold text-gray-900">${bestItem.Titel}</h3>
+                        <p class="text-gray-700 mt-2">${bestItem.Beschreibung}</p>
+                        <p class="mt-4 text-xl font-semibold text-green-700">
+                            Zustimmung: ${((bestItem.Votes_Top / (bestItem.Votes_Top + bestItem.Votes_Flop)) * 100).toFixed(1)}% (${bestItem.Votes_Top} Top Stimmen)
+                        </p>
+                        <p class="text-sm text-yellow-700 mt-2">Dies ist das aktuelle Monats-Highlight (Sortierung basiert auf Verhältnis).</p>
+                    </div>
+                `;
+            } else {
+                 bestContainerEl.classList.add('hidden');
+            }
+        }
+        
+        window.toggleShowAll = function() {
+            isShowingAll = !isShowingAll;
+            if (isShowingAll) {
+                showAllBtn.textContent = 'Letzten Monat anzeigen';
+                showAllBtn.classList.replace('bg-blue-500', 'bg-indigo-500');
+            } else {
+                showAllBtn.textContent = 'Alle Beiträge anzeigen';
+                showAllBtn.classList.replace('bg-indigo-500', 'bg-blue-500');
+            }
+            applyFiltersAndSort();
+        }
+
+        /**
+         * Verarbeitet die Abstimmung und ruft den n8n Webhook auf.
+         * Jetzt inklusive Secret-Key und User-ID.
+         */
+        window.handleVote = async function(id, vote, button) {
+            if (!auth.currentUser) {
+                showModal('Sie müssen als Mitglied angemeldet sein, um abzustimmen.', false);
+                return;
+            }
+            
+            // Deaktiviere Buttons
+            const cardButtons = button.parentElement.querySelectorAll('button');
+            cardButtons.forEach(btn => {
+                btn.disabled = true;
+                btn.textContent = 'Wird gesendet...';
+            });
+
+            // --- START MOCK-VOTE LOGIK ---
+            // Simuliere eine Abstimmung, aber führe KEINE API-Aufrufe durch
+            await new Promise(resolve => setTimeout(resolve, 500)); 
+            
+            showModal(`Ihre Stimme (${vote}) für Beitrag ${id} wurde im Testmodus registriert.`, true);
+            
+            // Simuliere eine Datenaktualisierung in der UI
+            const itemToUpdate = allItems.find(item => item.ID === id);
+            if (itemToUpdate) {
+                if (vote === 'TOP') {
+                    itemToUpdate.Votes_Top += 1;
+                } else {
+                    itemToUpdate.Votes_Flop += 1;
+                }
+                // Recalculate ratio for sorting
+                itemToUpdate.ratio = (itemToUpdate.Votes_Top / (itemToUpdate.Votes_Top + itemToUpdate.Votes_Flop) || 1).toFixed(2);
+            }
+
+            // UI neu laden
+            applyFiltersAndSort(); 
+            // --- END MOCK-VOTE LOGIK ---
+            
+            /*
+            // Hier wäre der echte API-Code (auskommentiert):
+            try {
+                const userId = auth.currentUser.uid;
+                const url = `${VOTE_API_URL}?id=${encodeURIComponent(id)}&vote=${encodeURIComponent(vote)}&user=${encodeURIComponent(userId)}&secret=${encodeURIComponent(WEBAPP_SECRET_KEY)}`;
+                
+                const response = await fetch(url, { method: 'GET' }); 
+                
+                if (response.ok) {
+                    showModal(`Ihre Stimme (${vote}) für ID ${id} wurde gezählt!`, true);
+                    await fetchData(); 
+                } else {
+                    const errorText = await response.text();
+                    showModal(`Abstimmung fehlgeschlagen: ${errorText || 'Server-Fehler'}`, false);
+                }
+            } catch (error) {
+                console.error("Fehler beim Senden der Abstimmung:", error);
+                showModal('Netzwerk- oder API-Fehler beim Senden der Stimme.', false);
+            } finally {
+                // ... Button-Reset
+            }
+            */
+
+             // Aktiviere Buttons und setze Text zurück
+             cardButtons.forEach(btn => {
+                btn.disabled = false;
+                btn.textContent = btn.classList.contains('bg-green-500') ? '👍 Top' : '👎 Flop';
+            });
+        }
+
+        // --- STARTPUNKT ---
+        document.addEventListener('DOMContentLoaded', initializeFirebase);
+        window.applyFiltersAndSort = applyFiltersAndSort;
+        window.closeModal = closeModal; 
+    </script>
+</body>
+</html>
